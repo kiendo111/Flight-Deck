@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+<meta name="theme-color" content="#0b1114" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Flight Deck" />
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="icon" type="image/svg+xml" href="icon.svg" />
+<link rel="apple-touch-icon" href="icon-192.png" />
+<title>Flight Deck</title>
+<style>
+  html, body {
+    margin: 0; padding: 0;
+    height: 100%; width: 100%;
+    background: #0b1114;
+    overflow: hidden;
+    overscroll-behavior: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    /* respect safe areas (notch / gesture bar) */
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+  * { box-sizing: border-box; }
+  #root { width: 100%; height: 100%; }
+
+  /* Install banner — only shown when beforeinstallprompt fires */
+  #install-banner {
+    position: fixed; left: 12px; right: 12px; bottom: 12px; z-index: 999;
+    background: #111820;
+    color: #e7efef;
+    border: 1px solid rgba(120,140,152,0.28);
+    border-radius: 8px;
+    padding: 10px 12px;
+    display: none;
+    align-items: center;
+    gap: 10px;
+    font-family: "B612 Mono", "JetBrains Mono", "SF Mono", ui-monospace, Menlo, monospace;
+    font-size: 12px;
+    letter-spacing: 1.2px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    animation: slide-up .3s ease-out;
+  }
+  #install-banner.visible { display: flex; }
+  @keyframes slide-up { from { transform: translateY(20px); opacity: 0; } }
+  #install-banner .label { flex: 1; text-transform: uppercase; }
+  #install-banner button {
+    background: #3dfd6a; color: #000; border: none;
+    padding: 6px 12px; font-family: inherit; font-size: 11px;
+    font-weight: 700; letter-spacing: 1.5px; cursor: pointer;
+    border-radius: 4px;
+  }
+  #install-banner .dismiss {
+    background: transparent; color: #6a7882; padding: 6px 8px;
+    border: none; cursor: pointer; font-size: 14px;
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<div id="install-banner">
+  <span class="label">▲ Install Flight Deck</span>
+  <button id="install-btn">INSTALL</button>
+  <button class="dismiss" id="install-dismiss" aria-label="dismiss">✕</button>
+</div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" src="todo-core.jsx"></script>
+<script type="text/babel" src="variant-flightdeck.jsx"></script>
+
+<script type="text/babel">
+function App() {
+  // PWA always dark, comfortable density for touch
+  return (
+    <div style={{ width: '100%', height: '100%', background: '#0b1114' }}>
+      <FlightDeckVariant dark={true} density="comfortable" />
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+
+<script>
+  // ---- Service worker (offline support) ----
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('sw.js').catch(err => {
+        console.warn('SW registration failed:', err);
+      });
+    });
+  }
+
+  // ---- Install prompt (Android Chrome) ----
+  let deferredPrompt = null;
+  const banner = document.getElementById('install-banner');
+  const installBtn = document.getElementById('install-btn');
+  const dismissBtn = document.getElementById('install-dismiss');
+
+  // Already installed? Don't show banner.
+  const isStandalone = window.matchMedia('(display-mode: standalone)').matches
+    || window.navigator.standalone === true;
+
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredPrompt = e;
+    if (!isStandalone && !localStorage.getItem('flightdeck.install.dismissed')) {
+      banner.classList.add('visible');
+    }
+  });
+
+  installBtn.addEventListener('click', async () => {
+    if (!deferredPrompt) return;
+    banner.classList.remove('visible');
+    deferredPrompt.prompt();
+    await deferredPrompt.userChoice;
+    deferredPrompt = null;
+  });
+
+  dismissBtn.addEventListener('click', () => {
+    banner.classList.remove('visible');
+    localStorage.setItem('flightdeck.install.dismissed', '1');
+  });
+
+  window.addEventListener('appinstalled', () => {
+    banner.classList.remove('visible');
+    deferredPrompt = null;
+  });
+</script>
+</body>
+</html>

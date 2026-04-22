@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="112" fill="#0b1114"></rect>
+  
+  <defs>
+    <pattern id="scan" width="6" height="6" patternUnits="userSpaceOnUse">
+      <rect width="6" height="1" fill="rgba(255,255,255,0.025)"></rect>
+    </pattern>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#scan)"></rect>
+  
+  <rect x="64" y="256" width="384" height="2" fill="rgba(120,140,152,0.35)"></rect>
+  
+  <circle cx="256" cy="256" r="24" fill="#3dfd6a" filter="url(#glow)"></circle>
+  <circle cx="256" cy="256" r="44" fill="none" stroke="#3dfd6a" stroke-width="3" opacity="0.5"></circle>
+  
+  <polygon points="384,180 404,200 384,220 364,200" fill="#ff4cf5"></polygon>
+  
+  <text x="64" y="110" font-family="monospace" font-size="34" font-weight="700" fill="#3dfd6a" letter-spacing="4">TSK</text>
+  <text x="64" y="430" font-family="monospace" font-size="26" font-weight="700" fill="#4cf0ff" letter-spacing="3">FLT DECK</text>
+  
+  <path d="M 64 64 L 64 88 M 64 64 L 88 64" stroke="#3dfd6a" stroke-width="4"></path>
+  <path d="M 448 448 L 448 424 M 448 448 L 424 448" stroke="#3dfd6a" stroke-width="4"></path>
+  <defs>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="4"></feGaussianBlur>
+      <feMerge><feMergeNode></feMergeNode><feMergeNode in="SourceGraphic"></feMergeNode></feMerge>
+    </filter>
+  </defs>
+</svg>
