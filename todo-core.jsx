@@ -36,12 +36,13 @@ function useTodos(storageKey, seed = []) {
     if (alive.length !== state.trash.length) setState(toWrite);
   }, [state, storageKey]);
 
-  const add = useCallback((text, category = null, due = null) => {
+  // dueHasTime: true when user set an explicit HH:MM, false for date-only deadlines
+  const add = useCallback((text, category = null, due = null, dueHasTime = false) => {
     if (!text || !text.trim()) return;
     setState(s => ({
       ...s,
       todos: [
-        { id: Date.now() + Math.random(), text: text.trim(), done: false, category, due, created: Date.now() },
+        { id: Date.now() + Math.random(), text: text.trim(), done: false, category, due, dueHasTime, created: Date.now() },
         ...s.todos,
       ],
     }));
@@ -227,15 +228,17 @@ function fireConfetti(host, { colors = ['#ff5964', '#ffcf5c', '#4fb286', '#4a90e
 }
 
 // ───────────────────────────────────────────────────────────
-// parseInput — extracts #tag, /day or /date, and trailing
-// natural-language deadline words from the input. Returns
-// { text, category, due }.
+// parseInput — extracts #tag, /day or /date, :HHMMam/:HHMMpm
+// time tags, and trailing natural-language deadline words.
+// Returns { text, category, due, dueHasTime }.
 //
 // Accepted syntax (anywhere in input; repeats = last wins):
 //   #work                  → category "work"
 //   /fri | /tom | /today   → deadline by weekday/keyword
 //   /2026-05-01            → explicit ISO date
 //   /"May 1" | /'may 1'    → quoted human date (best-effort)
+//   :0930am | :1430        → time tag (am/pm or 24h)
+//   :0930pm | :09:30am     → also accepted
 //   plus trailing "fri"/"tomorrow" (legacy) still works.
 // ───────────────────────────────────────────────────────────
 const DAY_WORDS = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
@@ -255,7 +258,6 @@ function dueFromWord(word) {
 }
 
 function dueFromIso(str) {
-  // YYYY-MM-DD or YYYY/MM/DD
   const m = str.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})$/);
   if (!m) return null;
   const d = new Date(+m[1], +m[2] - 1, +m[3], 23, 59);
@@ -263,7 +265,6 @@ function dueFromIso(str) {
 }
 
 function dueFromHuman(str) {
-  // Try native Date parser as last resort (e.g. "may 1", "jan 3 2027").
   const d = new Date(str + ' ' + new Date().getFullYear());
   if (!isNaN(d)) { d.setHours(23, 59); return d.getTime(); }
   const d2 = new Date(str);
@@ -275,10 +276,28 @@ function parseInput(input) {
   let text = input;
   let category = null;
   let due = null;
+  let dueHasTime = false;
+  let parsedTime = null; // { h, m }
 
   // #tag — word chars, 2–14 chars
   text = text.replace(/(^|\s)#([a-z][a-z0-9_-]{1,13})/gi, (_, pre, tag) => {
     category = tag.toLowerCase(); return pre;
+  });
+
+  // :HHMMam / :HHMMpm / :HHMM (24h) — e.g. :0930am :1430 :09:30pm
+  // Accepts optional colon between hours and minutes: :09:30am or :0930am
+  text = text.replace(/(^|\s):(\d{1,2}):?(\d{2})(am|pm)?/gi, (_, pre, hStr, mStr, meridiem) => {
+    let h = parseInt(hStr, 10);
+    const m = parseInt(mStr, 10);
+    if (meridiem) {
+      const mer = meridiem.toLowerCase();
+      if (mer === 'am' && h === 12) h = 0;
+      if (mer === 'pm' && h !== 12) h += 12;
+    }
+    if (h >= 0 && h <= 23 && m >= 0 && m <= 59) {
+      parsedTime = { h, m };
+    }
+    return pre;
   });
 
   // /"quoted date" or /'quoted date'
@@ -312,33 +331,69 @@ function parseInput(input) {
     if (cm) { category = cm[1].toLowerCase(); text = cm[2]; }
   }
 
-  return { text: text.trim().replace(/\s+/g, ' '), category, due };
+  // Apply parsed time to due date (or default to today if no date set)
+  if (parsedTime) {
+    const base = due ? new Date(due) : new Date();
+    base.setHours(parsedTime.h, parsedTime.m, 0, 0);
+    due = base.getTime();
+    dueHasTime = true;
+  }
+
+  return { text: text.trim().replace(/\s+/g, ' '), category, due, dueHasTime };
 }
 
 // Back-compat for anything still calling parseDue.
 function parseDue(input) {
   const p = parseInput(input);
-  return { text: p.text, due: p.due, category: p.category };
+  return { text: p.text, due: p.due, category: p.category, dueHasTime: p.dueHasTime };
 }
 
-function formatDue(ts) {
+// ───────────────────────────────────────────────────────────
+// formatDue — human-readable deadline label.
+// Pass hasTime=true to append the HH:MMa/p suffix.
+// ───────────────────────────────────────────────────────────
+function formatDue(ts, hasTime) {
   if (!ts) return '';
   const d = new Date(ts);
   const now = new Date();
-  const diffDays = Math.round((d - now) / 86400000);
-  if (diffDays < 0) return `${Math.abs(diffDays)}d late`;
-  if (diffDays === 0) return 'today';
-  if (diffDays === 1) return 'tmrw';
-  if (diffDays < 7) return d.toLocaleDateString('en', { weekday: 'short' }).toLowerCase();
-  return d.toLocaleDateString('en', { month: 'short', day: 'numeric' }).toLowerCase();
+  const diffMs = d - now;
+  const diffDays = Math.round(diffMs / 86400000);
+
+  let datePart;
+  if (diffDays < 0) datePart = `${Math.abs(diffDays)}d late`;
+  else if (diffDays === 0) datePart = 'today';
+  else if (diffDays === 1) datePart = 'tmrw';
+  else if (diffDays < 7) datePart = d.toLocaleDateString('en', { weekday: 'short' }).toLowerCase();
+  else datePart = d.toLocaleDateString('en', { month: 'short', day: 'numeric' }).toLowerCase();
+
+  if (hasTime) {
+    const h = d.getHours();
+    const m = d.getMinutes();
+    const ampm = h >= 12 ? 'p' : 'a';
+    const h12 = h % 12 || 12;
+    datePart += `:${String(h12).padStart(2, '0')}${String(m).padStart(2, '0')}${ampm}`;
+  }
+
+  return datePart;
 }
 
+// ───────────────────────────────────────────────────────────
+// dueUrgency — STATUS thresholds:
+//   'late'    → overdue (WARNING)
+//   'caution' → within 2 hours (CAUTION)
+//   'today'   → same calendar day but >2h away
+//   'soon'    → within 2 days
+//   'later'   → beyond that
+//   'none'    → no deadline set
+// ───────────────────────────────────────────────────────────
 function dueUrgency(ts) {
   if (!ts) return 'none';
-  const diff = Math.round((ts - Date.now()) / 86400000);
+  const diff = ts - Date.now();
   if (diff < 0) return 'late';
-  if (diff === 0) return 'today';
-  if (diff <= 2) return 'soon';
+  if (diff < 2 * 3600 * 1000) return 'caution'; // within 2 hours → CAUTION
+  const diffDays = Math.round(diff / 86400000);
+  if (diffDays === 0) return 'today';
+  if (diffDays <= 2) return 'soon';
   return 'later';
 }
 
@@ -354,13 +409,13 @@ function formatTrashExpiry(deletedAt) {
 // Seed data
 // ───────────────────────────────────────────────────────────
 const SEED_TODOS = [
-  { id: 1, text: 'ship offline-first release', done: false, category: 'work', due: Date.now() + 86400000, created: Date.now() - 2e8 },
-  { id: 2, text: 'reply to andre re: Q3 plan', done: false, category: 'work', due: Date.now() - 86400000, created: Date.now() - 3e8 },
-  { id: 3, text: 'pay rent', done: false, category: 'life', due: Date.now() + 3 * 86400000, created: Date.now() - 1e8 },
-  { id: 4, text: 'water the monstera', done: true, category: 'life', due: null, created: Date.now() - 4e8, completedAt: Date.now() - 1e7 },
-  { id: 5, text: 'book dentist', done: false, category: 'health', due: null, created: Date.now() - 1e7 },
-  { id: 6, text: 'read "patterns of software"', done: false, category: 'read', due: null, created: Date.now() - 5e8 },
-  { id: 7, text: 'draft annual review', done: true, category: 'work', due: null, created: Date.now() - 6e8, completedAt: Date.now() - 2e7 },
+  { id: 1, text: 'ship offline-first release', done: false, category: 'work', due: Date.now() + 86400000, dueHasTime: false, created: Date.now() - 2e8 },
+  { id: 2, text: 'reply to andre re: Q3 plan', done: false, category: 'work', due: Date.now() - 86400000, dueHasTime: false, created: Date.now() - 3e8 },
+  { id: 3, text: 'pay rent', done: false, category: 'life', due: Date.now() + 3 * 86400000, dueHasTime: false, created: Date.now() - 1e8 },
+  { id: 4, text: 'water the monstera', done: true, category: 'life', due: null, dueHasTime: false, created: Date.now() - 4e8, completedAt: Date.now() - 1e7 },
+  { id: 5, text: 'book dentist', done: false, category: 'health', due: null, dueHasTime: false, created: Date.now() - 1e7 },
+  { id: 6, text: 'read "patterns of software"', done: false, category: 'read', due: null, dueHasTime: false, created: Date.now() - 5e8 },
+  { id: 7, text: 'draft annual review', done: true, category: 'work', due: null, dueHasTime: false, created: Date.now() - 6e8, completedAt: Date.now() - 2e7 },
 ];
 
 Object.assign(window, {

@@ -1,9 +1,9 @@
 // Variant D — Flight Deck
-// Inspired by the Boeing 787 PFD/ND. Pure-black background, cockpit color
+// Boeing 787 Electronic Checklist aesthetic. Pure-black background, cockpit color
 // language: green for selected/active, magenta for targets (due dates),
-// cyan for background info (tags), amber for cautions (soon), red for warnings
+// cyan for background info (tags), amber for CAUTION (within 2h), red for WARNING
 // (overdue), white for current status. Airspeed-tape style active counter,
-// ND-style category chips, FMA banner up top.
+// ND-style category chips, FMA banner with STATUS + FLT NR.
 
 function FlightDeckVariant({ dark = true, density = 'compact' }) {
   const T = useTodos('todo.flightdeck', SEED_TODOS);
@@ -16,12 +16,11 @@ function FlightDeckVariant({ dark = true, density = 'compact' }) {
   const [editingId, setEditingId] = React.useState(null);
   const hostRef = React.useRef(null);
 
-  // cockpit palette — dark is a warm matte phosphor-on-black,
-  // light is a glass-cockpit "reversionary day mode" (cream paper, dark ink,
-  // cockpit colors shifted darker for AA contrast on light bg)
+  // cockpit palette — dark is warm phosphor-on-black,
+  // light is glass-cockpit "reversionary day mode"
   const P = dark ? {
-    bg: '#0b1114',                   // matte charcoal (was #020405)
-    panel: '#111820',                // slightly raised panel
+    bg: '#0b1114',
+    panel: '#111820',
     fg: '#e7efef',
     dim: '#6a7882',
     green: '#3dfd6a',
@@ -31,7 +30,6 @@ function FlightDeckVariant({ dark = true, density = 'compact' }) {
     red: '#ff3838',
     line: 'rgba(120,140,152,0.22)',
     scanline: 'rgba(255,255,255,0.012)',
-    // action-preview & toast backgrounds
     completeWash: 'rgba(61,253,106,0.15)',
     deleteWash: 'rgba(255,56,56,0.18)',
     editWash: 'rgba(61,253,106,0.04)',
@@ -40,14 +38,14 @@ function FlightDeckVariant({ dark = true, density = 'compact' }) {
     filterActive: 'rgba(61,253,106,0.08)',
     execFg: '#000',
   } : {
-    bg: '#e6e8eb',                   // light cool grey (day-mode display)
+    bg: '#e6e8eb',
     panel: '#dcdfe3',
     fg: '#141820',
     dim: '#707884',
-    green: '#0e7a2a',                // spruce
-    magenta: '#9a1a88',              // heather
-    cyan: '#056978',                 // deep teal
-    amber: '#a45a1b',                // burnt amber
+    green: '#0e7a2a',
+    magenta: '#9a1a88',
+    cyan: '#056978',
+    amber: '#a45a1b',
     red: '#b0231c',
     line: 'rgba(20,24,32,0.18)',
     scanline: 'rgba(0,0,0,0.015)',
@@ -79,13 +77,22 @@ function FlightDeckVariant({ dark = true, density = 'compact' }) {
   });
   const activeCount = todos.filter(t => !t.done).length;
   const doneCount = todos.length - activeCount;
-  const overdueCount = todos.filter(t => !t.done && t.due && t.due < Date.now()).length;
+
+  // STATUS thresholds — recalculated every render (clock updates every 1s)
+  const nowMs = Date.now();
+  const twoH = 2 * 3600 * 1000;
+  const activeDueTodos = todos.filter(t => !t.done && t.due);
+  const overdueCount = activeDueTodos.filter(t => t.due < nowMs).length;
+  const cautionCount = activeDueTodos.filter(t => t.due >= nowMs && (t.due - nowMs) < twoH).length;
+  const statusLabel = overdueCount > 0 ? 'WARNING' : cautionCount > 0 ? 'CAUTION' : 'NORMAL';
+  const statusColor = overdueCount > 0 ? red : cautionCount > 0 ? amber : green;
+  const statusBlink = overdueCount > 0 || cautionCount > 0;
 
   const submit = (e) => {
     e.preventDefault();
     if (!input.trim()) return;
-    const { text, category, due } = parseInput(input);
-    add(text, category, due);
+    const { text, category, due, dueHasTime } = parseInput(input);
+    add(text, category, due, dueHasTime);
     setInput('');
   };
 
@@ -119,16 +126,24 @@ function FlightDeckVariant({ dark = true, density = 'compact' }) {
         backgroundImage: `repeating-linear-gradient(0deg, ${scanline} 0 1px, transparent 1px 3px)`,
       }} />
 
-      {/* FMA banner — top, green active mode */}
+      {/* FMA banner — top */}
       <div style={{
         display: 'flex', alignItems: 'stretch', borderBottom: `1px solid ${line}`,
         background: panel,
       }}>
-        <FMABox label="TSK MODE" value="MANUAL" color={green} fs={fs} line={line} />
-        <FMABox label="PRIO"     value={overdueCount ? `${overdueCount} LATE` : 'NOMINAL'}
-                color={overdueCount ? red : green} fs={fs} line={line} blink={overdueCount > 0} />
-        <FMABox label="SORT"     value={sortBy.toUpperCase()} color={green} fs={fs} line={line} />
-        <FMABox label="UTC"      value={zulu} color={fg} fs={fs} line={line} last />
+        {/* FLT NR — replaces TSK MODE/MANUAL; editable flight number */}
+        <FlightNrBox fs={fs} line={line} green={green} dim={dim} fg={fg} />
+
+        {/* STATUS — NORMAL / CAUTION / WARNING */}
+        <FMABox
+          label="STATUS"
+          value={statusLabel}
+          color={statusColor}
+          fs={fs} line={line}
+          blink={statusBlink}
+        />
+        <FMABox label="SORT" value={sortBy.toUpperCase()} color={green} fs={fs} line={line} />
+        <FMABox label="UTC"  value={zulu} color={fg} fs={fs} line={line} last />
       </div>
 
       {/* PFD-style status header */}
@@ -143,9 +158,11 @@ function FlightDeckVariant({ dark = true, density = 'compact' }) {
         </div>
         {/* center: title */}
         <div style={{ textAlign: 'center' }}>
-          <div style={{ color: fg, fontSize: fs + 3, fontWeight: 700, letterSpacing: 3 }}>TASK · PFD</div>
+          <div style={{ color: fg, fontSize: fs + 1, fontWeight: 700, letterSpacing: 2, whiteSpace: 'nowrap' }}>
+            ELECTRONIC CHECKLIST
+          </div>
           <div style={{ color: dim, fontSize: fs - 2, letterSpacing: 1.5, marginTop: 2 }}>
-            TDO · REV {(todos.length + trash.length).toString().padStart(4, '0')}
+            ELEC · REV {(todos.length + trash.length).toString().padStart(4, '0')}
           </div>
         </div>
         {/* right: alt-tape-style done counter */}
@@ -154,7 +171,7 @@ function FlightDeckVariant({ dark = true, density = 'compact' }) {
         </div>
       </div>
 
-      {/* MCP-style filter + sort */}
+      {/* MCP-style filter tabs */}
       <div style={{
         display: 'flex', alignItems: 'stretch', borderBottom: `1px solid ${line}`,
         background: panel,
@@ -182,7 +199,7 @@ function FlightDeckVariant({ dark = true, density = 'compact' }) {
         ))}
       </div>
 
-      {/* sort (ND-style) */}
+      {/* sort bar */}
       {filter !== 'trash' && (
         <div style={{
           display: 'flex', alignItems: 'center', gap: 0,
@@ -253,7 +270,7 @@ function FlightDeckVariant({ dark = true, density = 'compact' }) {
             borderRight: `1px solid ${line}`,
           }}>CDU▶</span>
           <input value={input} onChange={e => setInput(e.target.value)}
-            placeholder='ENTER TASK  #TAG  /FRI  /2026-05-01'
+            placeholder='TASK  #TAG  /FRI  /2026-05-01  :0930AM'
             style={{
               flex: 1, background: 'transparent', border: 'none', outline: 'none',
               color: fg, fontFamily: 'inherit', fontSize: fs, caretColor: green,
@@ -311,6 +328,70 @@ function FlightDeckVariant({ dark = true, density = 'compact' }) {
   );
 }
 
+// ───────────────────────────────────────────────────────────
+// FlightNrBox — editable FLT NR (replaces TSK MODE/MANUAL).
+// Tap to set flight number (e.g. VN631). Persists to localStorage.
+// ───────────────────────────────────────────────────────────
+function FlightNrBox({ fs, line, green, dim, fg }) {
+  const [nr, setNr] = React.useState(() =>
+    localStorage.getItem('flightdeck.fltnr') || '----'
+  );
+  const [editing, setEditing] = React.useState(false);
+  const [val, setVal] = React.useState('');
+
+  const startEdit = () => {
+    setVal(nr === '----' ? '' : nr);
+    setEditing(true);
+  };
+  const commit = () => {
+    const v = (val.trim().toUpperCase() || '----').slice(0, 8);
+    setNr(v);
+    try { localStorage.setItem('flightdeck.fltnr', v); } catch (_) {}
+    setEditing(false);
+  };
+
+  return (
+    <div
+      onClick={!editing ? startEdit : undefined}
+      title="TAP TO SET FLIGHT NUMBER"
+      style={{
+        flex: 1, padding: '4px 8px',
+        borderRight: `1px solid ${line}`,
+        display: 'flex', flexDirection: 'column', gap: 1,
+        cursor: editing ? 'default' : 'text',
+      }}
+    >
+      <div style={{ color: green, opacity: 0.55, fontSize: fs - 3, letterSpacing: 1.5 }}>FLT NR</div>
+      {editing ? (
+        <input
+          value={val}
+          onChange={e => setVal(e.target.value.toUpperCase())}
+          onBlur={commit}
+          onKeyDown={e => {
+            if (e.key === 'Enter') commit();
+            if (e.key === 'Escape') setEditing(false);
+          }}
+          autoFocus
+          style={{
+            background: 'transparent', border: 'none', outline: 'none',
+            color: green, fontFamily: 'inherit', fontSize: fs - 1,
+            letterSpacing: 1.2, fontWeight: 700, width: '100%',
+            caretColor: green, padding: 0,
+            borderBottom: `1px dashed ${green}`,
+          }}
+        />
+      ) : (
+        <div style={{ color: green, fontSize: fs - 1, letterSpacing: 1.2, fontWeight: 700 }}>
+          {nr}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ───────────────────────────────────────────────────────────
+// FMABox — standard FMA cell
+// ───────────────────────────────────────────────────────────
 function FMABox({ label, value, color, fs, line, last, blink }) {
   return (
     <div style={{
@@ -327,6 +408,9 @@ function FMABox({ label, value, color, fs, line, last, blink }) {
   );
 }
 
+// ───────────────────────────────────────────────────────────
+// SpeedTape — airspeed/altitude tape numeric readout
+// ───────────────────────────────────────────────────────────
 function SpeedTape({ value, label, color, fs, dim, fg, rtl }) {
   return (
     <div style={{
@@ -342,37 +426,72 @@ function SpeedTape({ value, label, color, fs, dim, fg, rtl }) {
   );
 }
 
+// ───────────────────────────────────────────────────────────
+// DeckRow — single checklist item with swipe gestures,
+// inline edit, time tag display, and wrapping text.
+//
+// Text wraps naturally to 2nd/3rd lines; tag chips scale up
+// proportionally with task text length (longer text = the tags
+// that appear on a subsequent line are more prominent).
+// ───────────────────────────────────────────────────────────
 function DeckRow({ todo, i, onToggle, onRemove, onSave, editing, onStartEdit, onCancelEdit,
   rowH, pad, fs, fg, dim, green, magenta, cyan, amber, red, line, P }) {
   const { dx, bind } = useSwipe({ onLeft: onRemove, onRight: onToggle, disabled: editing });
   const actionSide = dx > 0 ? 'complete' : dx < 0 ? 'delete' : null;
-  const due = todo.due ? formatDue(todo.due) : null;
+
   const urg = dueUrgency(todo.due);
-  const dueColor = todo.done ? dim : urg === 'late' ? red : urg === 'today' ? amber :
-    urg === 'soon' ? amber : magenta;
+  const dueColor = todo.done ? dim
+    : urg === 'late'    ? red
+    : urg === 'caution' ? amber
+    : urg === 'today'   ? amber
+    : urg === 'soon'    ? amber
+    : magenta;
+
   const inputRef = React.useRef(null);
   const [val, setVal] = React.useState(todo.text);
   const [clearTag, setClearTag] = React.useState(false);
   const [clearDue, setClearDue] = React.useState(false);
+
   React.useEffect(() => {
-    if (editing) { setVal(todo.text); setClearTag(false); setClearDue(false); setTimeout(() => inputRef.current?.focus(), 0); }
+    if (editing) {
+      setVal(todo.text);
+      setClearTag(false);
+      setClearDue(false);
+      setTimeout(() => inputRef.current?.focus(), 0);
+    }
   }, [editing]);
 
   const parsedPreview = editing ? parseInput(val) : null;
-  const effCat = editing ? (clearTag ? null : (parsedPreview.category ?? todo.category ?? null)) : todo.category;
-  const effDue = editing ? (clearDue ? null : (parsedPreview.due ?? todo.due ?? null)) : todo.due;
+  const effCat = editing
+    ? (clearTag ? null : (parsedPreview.category ?? todo.category ?? null))
+    : todo.category;
+  const effDue = editing
+    ? (clearDue ? null : (parsedPreview.due ?? todo.due ?? null))
+    : todo.due;
+  const effDueHasTime = editing
+    ? (clearDue ? false : (parsedPreview.dueHasTime || (!parsedPreview.due && (todo.dueHasTime || false))))
+    : (todo.dueHasTime || false);
 
   const commit = () => {
     const parsed = parseInput(val);
+    const newDue = clearDue ? null : (parsed.due ?? todo.due ?? null);
+    const newDueHasTime = clearDue ? false : (parsed.due ? parsed.dueHasTime : (todo.dueHasTime || false));
     onSave({
       text: parsed.text || todo.text,
       category: clearTag ? null : (parsed.category ?? todo.category ?? null),
-      due: clearDue ? null : (parsed.due ?? todo.due ?? null),
+      due: newDue,
+      dueHasTime: newDueHasTime,
     });
   };
 
+  // Tag font size scales with text length — longer entries push tags to their
+  // own wrapped line, where slightly larger chips read better.
+  const textLen = todo.text.length;
+  const tagFs = textLen > 50 ? fs : textLen > 28 ? fs - 1 : fs - 2;
+
   return (
     <div style={{ position: 'relative', overflow: 'hidden', borderBottom: `1px dashed ${line}` }}>
+      {/* swipe reveal layer */}
       <div style={{
         position: 'absolute', inset: 0, display: 'flex', alignItems: 'center',
         justifyContent: actionSide === 'complete' ? 'flex-start' : 'flex-end',
@@ -385,24 +504,32 @@ function DeckRow({ todo, i, onToggle, onRemove, onSave, editing, onStartEdit, on
         {actionSide === 'complete' && '✓ CAPTURE'}
         {actionSide === 'delete' && 'JETTISON ✗'}
       </div>
+
+      {/* row content */}
       <div {...bind} data-row style={{
-        padding: `${editing ? 6 : 0}px ${pad}px`, minHeight: rowH,
-        transform: `translateX(${dx}px)`, transition: dx === 0 ? 'transform .2s' : 'none',
-        userSelect: editing ? 'text' : 'none', touchAction: 'pan-y',
+        padding: `${editing ? 6 : 4}px ${pad}px`,
+        minHeight: rowH,
+        transform: `translateX(${dx}px)`,
+        transition: dx === 0 ? 'transform .2s' : 'none',
+        userSelect: editing ? 'text' : 'none',
+        touchAction: 'pan-y',
         background: editing ? (P?.editWash || 'rgba(61,253,106,0.04)') : 'transparent',
         display: 'flex', flexDirection: 'column', gap: 4,
         justifyContent: 'center',
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        {/* main row — number + LED + text/tags (wrapping) */}
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
           {/* waypoint index */}
           <span style={{
             color: dim, width: 22, textAlign: 'right', fontSize: fs - 2,
-            letterSpacing: 1,
+            letterSpacing: 1, flexShrink: 0, paddingTop: 2,
           }}>{String(i + 1).padStart(2, '0')}</span>
-          {/* checkbox: LED-style */}
+
+          {/* LED checkbox */}
           <button onClick={onToggle} style={{
             background: 'transparent', border: 'none', padding: 0, cursor: 'pointer',
-            width: 14, height: 14, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            width: 14, height: 14, display: 'flex', alignItems: 'center',
+            justifyContent: 'center', flexShrink: 0, marginTop: 1,
           }} title={todo.done ? 'CAPTURED' : 'ACTIVE'}>
             <span style={{
               width: 10, height: 10, borderRadius: '50%',
@@ -411,53 +538,66 @@ function DeckRow({ todo, i, onToggle, onRemove, onSave, editing, onStartEdit, on
               boxShadow: todo.done ? `0 0 6px ${green}` : 'none',
             }} />
           </button>
-          {/* text */}
-          {editing ? (
-            <input ref={inputRef} value={val} onChange={e => setVal(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') { e.preventDefault(); commit(); }
-                if (e.key === 'Escape') onCancelEdit();
-              }}
-              style={{
-                flex: 1, background: 'transparent', border: 'none', outline: 'none',
-                color: fg, fontFamily: 'inherit', fontSize: fs, caretColor: green,
-                letterSpacing: 1.2, textTransform: 'uppercase',
-                borderBottom: `1px dashed ${green}`,
-              }} />
-          ) : (
-            <span
-              onPointerDown={(e) => e.stopPropagation()}
-              onPointerUp={(e) => { e.stopPropagation(); if (!todo.done) onStartEdit(); }}
-              style={{
-                flex: 1, cursor: 'text',
-                color: todo.done ? dim : fg,
-                textDecoration: todo.done ? 'line-through' : 'none',
-                textDecorationColor: dim,
-                textTransform: 'uppercase', letterSpacing: 1.2,
-                whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-              }}>{todo.text}</span>
-          )}
-          {/* tag chip — cyan (background info) */}
-          {effCat && !editing && (
-            <span style={{
-              color: cyan, fontSize: fs - 2, letterSpacing: 1.5,
-              border: `1px solid ${cyan}55`, padding: '0 5px', opacity: todo.done ? 0.5 : 1,
-            }}>{effCat.toUpperCase()}</span>
-          )}
-          {/* due — magenta target (late = red) */}
-          {effDue && !editing && (
-            <span style={{
-              color: dueColor, fontSize: fs - 1, letterSpacing: 1,
-              fontVariantNumeric: 'tabular-nums', fontWeight: 700,
-              textShadow: !todo.done ? `0 0 4px ${dueColor}55` : 'none',
-              minWidth: 40, textAlign: 'right',
-            }}>▶{formatDue(effDue).toUpperCase()}</span>
-          )}
+
+          {/* text + tags — wrapping flex container */}
+          <div style={{
+            flex: 1, display: 'flex', flexWrap: 'wrap',
+            gap: '3px 6px', alignItems: 'baseline',
+          }}>
+            {/* task text (wraps) */}
+            {editing ? (
+              <input ref={inputRef} value={val} onChange={e => setVal(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') { e.preventDefault(); commit(); }
+                  if (e.key === 'Escape') onCancelEdit();
+                }}
+                style={{
+                  flex: '1 1 60%', background: 'transparent', border: 'none', outline: 'none',
+                  color: fg, fontFamily: 'inherit', fontSize: fs, caretColor: green,
+                  letterSpacing: 1.2, textTransform: 'uppercase',
+                  borderBottom: `1px dashed ${green}`,
+                }} />
+            ) : (
+              <span
+                onPointerDown={(e) => e.stopPropagation()}
+                onPointerUp={(e) => { e.stopPropagation(); if (!todo.done) onStartEdit(); }}
+                style={{
+                  flex: '1 1 55%', cursor: 'text',
+                  color: todo.done ? dim : fg,
+                  textDecoration: todo.done ? 'line-through' : 'none',
+                  textDecorationColor: dim,
+                  textTransform: 'uppercase', letterSpacing: 1.2,
+                  wordBreak: 'break-word', lineHeight: 1.4,
+                }}>{todo.text}</span>
+            )}
+
+            {/* category chip — cyan */}
+            {effCat && !editing && (
+              <span style={{
+                color: cyan, fontSize: tagFs, letterSpacing: 1.2,
+                border: `1px solid ${cyan}55`, padding: '0 5px',
+                opacity: todo.done ? 0.5 : 1, flexShrink: 0,
+                lineHeight: 1.5,
+              }}>{effCat.toUpperCase()}</span>
+            )}
+
+            {/* due tag — magenta/amber/red; shows time if dueHasTime */}
+            {effDue && !editing && (
+              <span style={{
+                color: dueColor, fontSize: tagFs, letterSpacing: 1,
+                fontVariantNumeric: 'tabular-nums', fontWeight: 700,
+                textShadow: !todo.done ? `0 0 4px ${dueColor}55` : 'none',
+                flexShrink: 0, lineHeight: 1.5,
+              }}>▶{formatDue(effDue, effDueHasTime).toUpperCase()}</span>
+            )}
+          </div>
         </div>
+
+        {/* edit toolbar */}
         {editing && (
           <div style={{ display: 'flex', gap: 6, paddingLeft: 34, alignItems: 'center', flexWrap: 'wrap' }}>
             <span style={{ color: dim, fontSize: fs - 3, letterSpacing: 1.5 }}>
-              #TAG · /FRI · /2026-05-01
+              #TAG · /FRI · /2026-05-01 · :0930AM
             </span>
             <div style={{ flex: 1 }} />
             {effCat && (
@@ -474,7 +614,7 @@ function DeckRow({ todo, i, onToggle, onRemove, onSave, editing, onStartEdit, on
                   background: 'transparent', border: `1px solid ${magenta}`, color: magenta,
                   padding: '0 6px', fontFamily: 'inherit', fontSize: fs - 3,
                   letterSpacing: 1.2, cursor: 'pointer',
-                }}>{formatDue(effDue).toUpperCase()} ✗</button>
+                }}>{formatDue(effDue, effDueHasTime).toUpperCase()} ✗</button>
             )}
             <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={commit}
               style={{
@@ -489,6 +629,9 @@ function DeckRow({ todo, i, onToggle, onRemove, onSave, editing, onStartEdit, on
   );
 }
 
+// ───────────────────────────────────────────────────────────
+// DeckTrashRow — trashed item with restore/purge controls
+// ───────────────────────────────────────────────────────────
 function DeckTrashRow({ todo, i, onRestore, onForever, rowH, pad, fs, fg, dim, red, cyan, amber, line }) {
   return (
     <div style={{
@@ -501,16 +644,17 @@ function DeckTrashRow({ todo, i, onRestore, onForever, rowH, pad, fs, fg, dim, r
       </span>
       <span style={{
         width: 10, height: 10, border: `1.5px dashed ${dim}`, borderRadius: '50%',
+        flexShrink: 0,
       }} />
       <span style={{
         flex: 1, color: dim, textDecoration: 'line-through', textDecorationColor: dim,
         textTransform: 'uppercase', letterSpacing: 1.2,
-        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        wordBreak: 'break-word', lineHeight: 1.4,
       }}>
         {todo.category && <span style={{ color: cyan, opacity: 0.5, marginRight: 6 }}>{todo.category.toUpperCase()}</span>}
         {todo.text}
       </span>
-      <span style={{ color: amber, fontSize: fs - 2, letterSpacing: 1.2 }}>
+      <span style={{ color: amber, fontSize: fs - 2, letterSpacing: 1.2, flexShrink: 0 }}>
         T-{formatTrashExpiry(todo.deletedAt).toUpperCase()}
       </span>
       <button onClick={onRestore} title="RESTORE" style={{
@@ -527,6 +671,9 @@ function DeckTrashRow({ todo, i, onRestore, onForever, rowH, pad, fs, fg, dim, r
   );
 }
 
+// ───────────────────────────────────────────────────────────
+// EmptyDeck — empty state messaging
+// ───────────────────────────────────────────────────────────
 function EmptyDeck({ filter, dim, green, cyan, fs }) {
   const msgs = {
     all:    { big: 'FLIGHT PLAN EMPTY',    small: 'NO WAYPOINTS ENTERED · CDU READY' },
